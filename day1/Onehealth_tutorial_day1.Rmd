@@ -1,0 +1,691 @@
+---
+title: "Social Networks Analysis in One Health Epidemiology with R"
+author:
+- Andrzej Jarynowski (ajarynowski@gmail.com)
+- Vitaly Belik (vitaly.belik@fu-berlin.de)
+date: "17 March, 2019"
+output:
+  html_document:
+    toc: yes
+    toc_float: true
+    depth: 3
+    fig_caption: yes
+    highlight: tango
+    number_sections: yes
+    theme: paper
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+In our tutorial we used materials by John M. Drake, Mateo Mangani, Sharon Kuhman, Michal Burdukiewicz and Katya Ognyanova and Eric Kolaczyk.
+
+In this workshop we introduce an igraph  R package to analyze  social networks represented within the more general framework of disease spread. 
+
+To introduce the problem we will use the African Swine Fever spread in  Poland case. Each type of relation (pig production supply chain, wild board density, human mobility) defines a network between counties:
+_vertices_ (or _nodes_) represent counties 
+_edges_ connect adjacent vertices (possibility of transmitting infection.
+
+
+_SNA In R_
+Network generations
+Network plotting 
+Layouts
+Degree distribution
+Centrality
+Giant component and percolation
+Paths 
+
+analyse it (degrees, other metrics, may be communities)
+export into format for visualization (using ndtv package in R)
+produce a html embeddeded visualization of the network (using ndtv package in R)
+
+
+
+_Modelling (outside of R)_
+SIR spreadsheet
+VENSIM SIR (system dynamics)
+Python (differential equations)
+Compare standard epi-model (solve ODEs): SI, SIS, SIR, SIRS
+Compare them to network (still ODES)
+ Compare to stochastic epidemics on a network
+Run epidemics on a grid (ODES), 
+Epidemic wave (spatial propagation)
+Time series analysis (surveillance package)
+Agent Based Modelling (Netlogo http://sirsz.pl/data/materialy/szpital2.html) 
+Food outbreak investigation (https://foodrisklabs.bfr.bund.de/foodchain-lab/ )
+
+_ASF Example_
+
+Maps Generating
+
+ASF Data:
+ 	- Event Data (for say around 50 counties)
+ 	- Network based on geographical distance
+ 	[- provide human, forest, pig density for network construction?]
+ 	- Network based on the effective distance (with fitted last time parameters)
+	- Network based on the correlation of time events
+
+ Tasks: 
+	- plot the networks (only topology), compare them
+	- analyse them (degrees, centrality etc.)
+ 	- check for correlations of arrival times and effective distance network (here we will provide shortest path routine to calculate the effective shortest path)
+
+# Social Network Analysis in R
+
+We start by loading the library an playing with network
+
+
+
+```{r}
+
+# install.packages("igraph","dplyr", "ggplot2", "surveillance", "scales", "deSolve") 
+
+library(igraph)
+library(dplyr)
+library(surveillance)
+library(ggplot2)
+library(scales)
+#library(deSolve)
+
+```
+
+
+Then we can create netorwks
+
+```{r}
+
+#  ------->> Create networks --------
+
+g4 <- graph( edges=c(1,2, 2,3, 3,1), n=3, directed=F ) # an undirected graph with 3 edges
+# The numbers are interpreted as vertex IDs, so the edges are 1-->2, 2-->3, 3-->1
+plot(g4) # 
+
+
+#  ------->> Edge, vertex, and network attributes --------
+
+# Access vertices and edges:
+E(g4) # The edges of the object
+V(g4) # The vertices of the object
+
+
+# You can examine the network matrix directly:
+g4[]
+g4[1,] 
+
+# Add attributes to the network, vertices, or edges:
+V(g4)$name # automatically generated when we created the network.
+V(g4)$gender <- c("male", "male", "female")
+E(g4)$type <- "email" # Edge attribute, assign "email" to all edges
+E(g4)$weight <- 10    # Edge weight, setting all existing edges to 10
+
+# Examine attributes
+edge_attr(g4)
+vertex_attr(g4)
+graph_attr(g4)
+
+
+
+```
+
+Networks can be read from file. The format allows us to specify various details, such as the directionality.
+
+
+We can create or generate networks.
+```{r}
+# Full graph
+fg <- make_full_graph(40)
+plot(fg, vertex.size=10, vertex.label=NA)
+
+# Star graph 
+st <- make_star(40)
+plot(st, vertex.size=10, vertex.label=NA) 
+
+# Tree graph
+tr <- make_tree(40, children = 3, mode = "undirected")
+plot(tr, vertex.size=10, vertex.label=NA) 
+
+# Ring graph
+rn <- make_ring(40)
+plot(rn, vertex.size=10, vertex.label=NA)
+
+# Erdos-Renyi random graph 
+# ('n' is number of nodes, 'm' is the number of edges)
+er <- sample_gnm(n=100, m=40) 
+plot(er, vertex.size=6, vertex.label=NA)  
+
+# Watts-Strogatz small-world graph
+# Creates a lattice with 'dim' dimensions of 'size' nodes each, and rewires edges 
+# randomly with probability 'p'. You can allow 'loops' and 'multiple' edges.
+# The neighborhood in which edges are connected is 'nei'.
+sw <- sample_smallworld(dim=2, size=10, nei=1, p=0.1)
+plot(sw, vertex.size=6, vertex.label=NA, layout=layout_in_circle)
+
+# Barabasi-Albert preferential attachment model for scale-free graphs
+# 'n' is number of nodes, 'power' is the power of attachment (1 is linear)
+# 'm' is the number of edges added on each time step 
+ba <-  sample_pa(n=100, power=1, m=1,  directed=F)
+plot(ba, vertex.size=6, vertex.label=NA)
+
+#igraph can also give you some notable historical graphs. For instance:
+zach <- graph("Zachary") # the Zachary carate club
+plot(zach, vertex.size=10, vertex.label=NA)
+
+```
+
+Networks can be read from file. Adjacency matrix allows us to specify various details, such as the directionality
+```{r}
+# matrix - dependency matrix for most likely introduction routes (transmission risk between counties)
+load("data.RData")
+
+net=graph_from_adjacency_matrix(matrix,  weighted=TRUE, mode="directed")
+
+#list - ASF introduction times to Polish counties (till 2017) with their characteristics (pig density, forest coverage, coordinates)
+
+list
+
+V(net)$names=list$county
+
+
+```
+To get a better understadning of the data, we can list the network attributes, for example actor attributes:
+```{r}
+V(net)$size <- 8
+V(net)$frame.color <- "white"
+V(net)$color <- "orange"
+V(net)$label <- "" 
+E(net)$arrow.mode <- 0
+plot(net)
+```
+Before performing a quantitative analysis we can plot the network, to get a first idea of its structure. We can produce a default visualization just by executing plot(net), but to make the plot more readable we will add a few details.You can set the layouts here.
+
+```{r}
+
+l <- layout_in_circle(net)
+plot(net, layout=l)
+
+# igraph has a number of built-in layouts, including:
+
+# Randomly placed vertices
+l <- layout_randomly(net)
+plot(net, layout=l)
+
+# Circle layout
+l <- layout_in_circle(net)
+plot(net, layout=l)
+
+# 3D sphere layout
+l <- layout_on_sphere(net)
+plot(net, layout=l)
+
+# The Fruchterman-Reingold force-directed algorithm 
+# Nice but slow, most often used in graphs smaller than ~1000 vertices. 
+l <- layout_with_fr(net)
+plot(net, layout=l)
+
+
+
+
+# You will also notice that the layout is not deterministic - different runs 
+# will result in slightly different configurations. Saving the layout in l
+# allows us to get the exact same result multiple times.
+par(mfrow=c(2,2), mar=c(1,1,1,1))
+plot(net, layout=layout_with_fr)
+plot(net, layout=layout_with_fr)
+plot(net, layout=l)
+plot(net, layout=l)
+dev.off()
+```
+
+In particular, we explicitly compute a layout that draws counties at geographical cooridinates.
+
+```{r}
+V(net)$x=list$x
+V(net)$y=list$y
+# coordinates (centroids of counties)
+#V(net)$District=list$District
+
+lay=matrix(data=c(V(net)$x,V(net)$y), nrow=18, ncol=2)
+
+plot.igraph(net, vertex.size=9, vertex.label=V(net)$names, vertex.label.cex=0.7, edge.arrow.size=0.3, layout=lay )
+
+# first year of outbreak
+for (i in 1:length(list[,1])) {
+  if (list$arrival_time[i]<365) {
+    V(net)[i]$first=1
+  }
+}
+plot.igraph(net, vertex.size=9, vertex.label=V(net)$names, vertex.label.cex=0.7, edge.arrow.size=0.3, vertex.color=c( "pink", "skyblue")[1+(V(net)$first==1)], layout=lay )
+
+```
+
+We can also use the metrcis to inspect the relationship between the role and group of the actors and the topology of the network.
+
+```{r}
+
+# Density
+# The proportion of present edges from all possible ties.
+edge_density(net, loops=F)
+ecount(net)/(vcount(net)*(vcount(net)-1)) #for a directed network
+
+# Reciprocity
+# The proportion of reciprocated ties (for a directed network).
+reciprocity(net)
+dyad_census(net) # Mutual, asymmetric, and null node pairs
+2*dyad_census(net)$mut/ecount(net) # Calculating reciprocity
+
+# Transitivity
+# global - ratio of triangles (direction disregarded) to connected triples
+# local - ratio of triangles to connected triples each vertex is part of
+transitivity(net, type="global")  # net is treated as an undirected network
+transitivity(as.undirected(net, mode="collapse")) # same as above
+transitivity(net, type="local")
+triad_census(net) # for directed networks
+
+```
+
+
+Degree distribution often reveal interesting topological structure.
+
+```{r }
+
+# Node degrees
+# 'degree' has a mode of 'in' for in-degree, 'out' for out-degree,
+# and 'all' or 'total' for total degree. 
+deg <- degree(net, mode="all")
+plot(net, vertex.size=deg*3)
+hist(deg, breaks=1:vcount(net)-1, main="Histogram of node degree")
+
+# Degree distribution
+deg.dist <- degree_distribution(net, cumulative=T, mode="all")
+plot( x=0:max(deg), y=1-deg.dist, pch=19, cex=1.2, col="orange", 
+      xlab="Degree", ylab="Cumulative Frequency")
+
+```
+
+Centrality functions (vertex level) and centralization functions (graph level)
+
+```{r}
+
+# Degree (number of ties)
+degree(net, mode="in")
+centr_degree(net, mode="in", normalized=T)
+
+# Closeness (centrality based on distance to others in the graph)
+# Inverse of the node's average geodesic distance to others in the network
+closeness(net, mode="all", weights = NA) 
+centr_clo(net, mode="all", normalized = T) 
+
+# Eigenvector (centrality proportional to the sum of connection centralities)
+# Values of the first eigenvector of the graph adjacency matrix
+eigen_centrality(net, directed = T, weights = NA)
+centr_eigen(net, directed = T, normalized=T) 
+
+# Betweenness (centrality based on a broker position connecting others)
+# (Number of geodesics that pass through the node or the edge)
+betweenness(net, directed=T, weights=NA)
+edge_betweenness(net, directed=T, weights=NA)
+centr_betw(net, directed=T, normalized=T)
+
+```
+
+To compute effective distances, we can use paths detecting algorithms. 
+```{r}
+
+# Average path length 
+# The mean of the shortest distance between each pair of nodes in the network 
+# (in both directions for directed graphs). 
+mean_distance(net, directed=F)
+mean_distance(net, directed=T)
+
+# We can also find the length of all shortest paths in the graph:
+distances(net) # with edge weights
+distances(net, weights=NA) # ignore weights
+
+# We can extract the distances to a node or set of nodes we are interested in.
+# Here we will get the distance of every counte from the first affected - bialostocki county.
+dist.from.bialystok <- distances(net, v=V(net)[names=="bialostocki"], to=V(net), weights=NA)
+
+# Set colors to plot the distances:
+oranges <- colorRampPalette(c("dark red", "gold"))
+col <- oranges(max(dist.from.bialystok)+1)
+col <- col[dist.from.bialystok+1]
+
+plot(net, vertex.color=col, vertex.label=dist.from.bialystok, edge.arrow.size=.6, 
+     vertex.label.color="white")
+
+# We can also find the shortest path between specific nodes.
+# Say here between bialski county (main regional hub for pig production) with source (first affected county):
+infection.path <- shortest_paths(net, 
+                            from = V(net)[names=="bialostocki"], 
+                            to  = V(net)[names=="bialski"],
+                            output = "both") # both path nodes and edges
+infection.path
+
+res <- sir(net, beta=5, gamma=1, no.sim=10)
+plot(res)
+
+```
+
+SIR Stochastic model on network
+```{r}
+res <- sir(net, beta=5, gamma=1, no.sim=10)
+plot(res)
+
+```
+
+
+
+
+# Modeling Spreading Processes on Networks
+
+The objective of this part is to understand the spreading processes on networks.
+
+
+We introduce here so-called compartmental epidemiological models. 
+
+## Susceptible-Infected (SI) model
+
+In this model the compartment of Susceptibles could be infected with a reaction rate $\beta$. This could be described by this kinetic equation:
+
+$$
+I + S\stackrel{\alpha}{\longrightarrow}2I.
+$$
+The corresponding mean-field deterministic equation under assumption of well-mixed population reads:
+
+$$
+\frac{dS}{dt} = -\alpha\frac{SI}{N}\\
+\frac{dI}{dt} = \alpha\frac{SI}{N},
+$$
+where $N$ is a total number of individuals (hosts) in a population.
+
+Below we implement this equation in R and plot the dependence of the number of infecteds vs time.
+
+
+```{r}
+# the code was inspired by https://ms.mcmaster.ca/~bolker/eeid/2011_eco/EEID2011_Simulation.pdf
+si.model <- function (t, x, params) {
+  S <- x[1]
+  I <- x[2]
+
+  with(
+    #susceptibles
+    #infected
+    #recovered
+    as.list(params), #local environment to evaluate derivatives
+    {
+      dS <- -beta*S*I/N
+      dI <- beta*S*I/N
+      dx <- c(dS,dI)
+      list(dx)
+    }
+  ) 
+}
+
+
+times <- seq(0,30,by=1/120)
+params <- c(N=1,beta=10)
+xstart <- c(S=1-0.001-0.9,I=0.001)
+R0 <- function(params) with(as.list(params), beta)
+out <- as.data.frame(deSolve::ode(xstart,times,si.model,params))
+
+op <- par(fig=c(0,1,0,0.5),mar=c(4,4,2,5))
+plot(I~S,data=out,type='b',log='xy',yaxt='n',xlab='S',cex=0.5)
+par(fig=c(0,1,0.5,1),mar=c(4,4,2,5), new=TRUE)
+plot(S~time,data=out,type='l', ylim=c(0,0.1), xlab='Time',main=paste('R(0) =', round(R0(params),2)))
+lines(I~time,data=out,type='l',col='red'); par(new=TRUE)
+
+axis(4)
+mtext('S', side=4, line=2)
+legend('topright', legend=c('Susceptible', 'Infectious'), col=c('black','red'), lty = 1:2, lt > par(op))
+```       
+     
+## Susceptible-Recovered Model
+
+Now we introduce recovery (or removal, e.g. death). The kinetic equation reads:
+
+$$
+\frac{dS}{dt} = -\alpha\frac{SI}{N}\\
+\frac{dI}{dt} = \alpha\frac{SI}{N}-\gamma I\\
+\frac{dR}{dt} = \gamma I,
+$$
+
+
+```{r}
+sir.model <- function (t, x, params) {
+  S <- x[1]
+  I <- x[2]
+  R <- x[3]
+  with(
+    #susceptibles
+    #infected
+    #recovered
+    as.list(params), #local environment to evaluate derivatives
+    {
+      dS <- -beta*S*I/N
+      dI <- beta*S*I/N-gamma*I
+      dR <- gamma*I
+      dx <- c(dS,dI,dR)
+      list(dx)
+    }
+  ) 
+}
+
+
+times <- seq(0,10,by=1/120) # setting the time of simulations
+params <- c(N=1, beta=20, gamma=5)
+xstart <- c(S=1-0.001-0.0,I=0.001,R=0.0)
+R0 <- function(params) with (as.list(params), beta/(gamma))
+out <- as.data.frame(deSolve::ode(xstart,times,sir.model,params))
+
+op <- par(fig=c(0,1,0,0.5),mar=c(4,4,2,5))
+plot(I~S,data=out,type='b',log='xy',yaxt='n',xlab='S',cex=0.5)
+par(fig=c(0,1,0.5,1),mar=c(4,4,2,5), new=TRUE)
+plot(S~time,data=out, type='l', ylim=c(0,max(S)+0.01), xlab='Time')
+lines(I~time,data=out, type='l',col='red'); par(new=TRUE)
+plot(R~time,data=out, type='l', ylim=c(min(R),max(R)), col='blue', axes=FALSE, xlab='', ylab='', main=paste('R(0) =',round(R0(params),2)), cex.main=0.9)
+axis(4)
+mtext('R', side=4, line=3)
+legend('topright', legend=c('Susceptible', 'Infectious', 'Recovered'), col=c('black','red','blue'), lty = 1:2, lt > par(op))
+```
+
+
+## SI epidemic on a random network
+
+```{r }
+# u = c(1,3,4,5)
+# v = c(2,1,2,3)
+# print("x")
+# print(x)
+
+# -----------------------
+N = 40 #graphsize
+M = 20 #number of edges
+T = 8 # maximal obervation time
+alpha = 0.8 # infection probability (per time unit)
+# set.seed(111) 
+
+# two random sequences for head and tail vertices in the edges are produced
+v <- sample(1:N, M, replace = TRUE)
+u <- sample(1:N, M, replace = TRUE)
+
+print(length(unique(c(v,u))))
+# what if one number is missing?
+# x = rep(0,length(unique(c(u,v))))
+x = rep(0,N)
+x[1] = 1
+
+print(x)
+x_next = x
+
+# Creating graph
+g <- graph( c(1:N), directed=FALSE )
+# g <- graph_from_edgelist(cbind(u,v), directed = FALSE)
+g <- add.edges(g,cbind(u,v))
+
+# get rid of multiple edges and loops
+g1 <- simplify(g)
+V(g1)$label.cex = 0.3 # scaling the size of the vertex label font
+#l1 <- layout_in_circle(g1)
+
+u <- as_edgelist(g1)[,1]
+v <- as_edgelist(g1)[,2]
+l1 <- layout_with_fr(g1)
+# V(g)$color = NULL
+# > plot(g1, layout=l, vertex.size=20)
+
+par( mfrow = c(2,4) ) # frames for plots
+
+inf <- sum(x)
+
+for (t in 1:T){
+  if (t %% 1 == 0){
+    for (j in 1:length(x)){
+      if (x[j] == 1){
+        V(g1)[j]$color<-"red" # assigning color to infected nodes
+      }
+    }
+    
+    # ploting the graph with infected vertices
+    plot(g1, layout=l1, vertex.size = 15, main=paste('t =',as.character(t)))
+    
+  }
+  
+  for (i in 1:length(u)){
+    n = u[i]
+    m = v[i]
+    
+  
+    if ((x[n] == 1) & (x[m] == 0) & (runif(1) < alpha)) {
+      
+      x_next[m] = 1
+      print("x_next")
+      print(x_next)
+      print(c(u[i],v[j]))
+    }
+    if ((x[m] == 1) & (x[n] == 0) & (runif(1) < alpha)){
+      x_next[n] = 1
+    }
+  }
+  x = x_next
+  inf <- cbind(inf,sum(x))
+}
+
+```
+
+
+# Case Study: African Swine Fever in Poland
+
+Plotting on the map
+```{r}
+map <- inner_join(Map_poland, counties_data, by = c("id" = "map_id_0"))
+
+p<-ggplot(data = map, mapping = aes(x = long, y = lat)) +
+  geom_polygon(mapping = aes(group = group, fill = pig))+ 
+  scale_fill_distiller("pig production", palette = "RdPu", breaks = pretty_breaks(n = 8), trans = "reverse")
+p
+
+
+hist(counties_data$pig)
+
+p<-ggplot(data = map, mapping = aes(x = long, y = lat)) +
+  geom_polygon(mapping = aes(group = group, fill = pig))+ 
+  scale_fill_distiller("pig production", palette = "RdPu", breaks = pretty_breaks(n = 8), trans = "reverse")
+p
+hist(counties_data$forest)
+p<-ggplot(data = map, mapping = aes(x = long, y = lat)) +
+  geom_polygon(mapping = aes(group = group, fill = forest))+ 
+  scale_fill_distiller("forest density", palette = "YlGn", breaks = pretty_breaks(n = 8), trans = "reverse")
+p
+p<-ggplot(data = map, mapping = aes(x = long, y = lat)) +
+  geom_polygon(mapping = aes(group = group, fill = hum))+ 
+  scale_fill_distiller("human density", breaks = pretty_breaks(n = 8), trans = "reverse")
+#linaer
+p
+
+p<-ggplot(data = map, mapping = aes(x = long, y = lat)) +
+  geom_polygon(mapping = aes(group = group, fill = hum))+ 
+  scale_fill_distiller("human density", breaks = pretty_breaks(n = 8), trans = "reverse")
+
+# in log scale?
+
+p<-ggplot(data = map, mapping = aes(x = long, y = lat)) +
+  geom_polygon(mapping = aes(group = group, fill = arrival_time))+ 
+  scale_fill_distiller("arrival time", breaks = pretty_breaks(n = 8), trans = "reverse")
+
+p
+
+
+```
+
+
+```{r}
+
+
+
+ fst=0.3
+ scale=0.18
+ hum=0.6
+ pork=0.7
+p1=matrix(0, nrow=380, ncol = 380)
+
+ 
+  for (i in 1:379){
+    for (j in (i+1):380) {
+p1[i,j]=scale*(hum*(counties_data$hum[i]*counties_data$hum[j])/(1+distance_C[i,j])+pork*(counties_data$pig[i]*counties_data$pig[j])/(1+distance_C[i,j])+fst*counties_data$forest[i]*counties_data$forest[j]/(1+distance_C[i,j])^2)
+p1[j,i]=p1[i,j]
+    }
+  }
+Poland_fully=graph_from_adjacency_matrix(p1,  weighted=TRUE)
+write.csv(p1, file="Pol_fully.csv")
+
+read_file=read.csv("Pol_fully.csv", header = FALSE)
+#treshold
+E(Poland_fully)
+Poland_smaller=delete.edges(Poland_fully, which(E(Poland_fully)$weight<0.005))
+E(Poland_smaller)
+V(Poland_smaller)$names=counties_data$county
+
+```
+
+
+
+Infections paths
+```{r}
+
+infection.path1 <- shortest_paths(Poland_smaller, 
+                            from = V(Poland_smaller)[names=="bialostocki"], 
+                            to  = V(Poland_smaller)[names=="gostynski"],
+                            output = "both") # both path nodes and edges
+infection.path1
+
+
+#delete parczewski county (sanitary cordon)
+Poland_mitigation=delete.vertices(Poland_smaller, 344)
+
+
+
+infection.path2 <- shortest_paths(Poland_mitigation, 
+                            from = V(Poland_mitigation)[names=="bialostocki"], 
+                            to  = V(Poland_mitigation)[names=="gostynski"],
+                            output = "both") # both path nodes and edges
+infection.path2
+
+
+
+```
+
+Understanding strategies
+```{r}   
+linear_arrival=lm(arrival_time~hum+forest+pig+forest*hum+pig*forest+pig*hum, data =counties_data)
+anova(linear_arrival)
+
+```
+
+Other mitigation strategies?
+
+
