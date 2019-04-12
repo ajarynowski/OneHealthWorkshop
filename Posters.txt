@@ -1,7 +1,0 @@
-Posters:
-L. Brzoska ”An Application of Stcohastic Blockmodels of the German cattle trade network“
-L. Del Core “Bayesian ANCOVA in Gene Therapy Studies”
-D. Kolbasov “Attitudes and Beliefs of Pig Farmers and Wild Boar Hunters Towards Reporting of African Swine Fever in Bulgaria, Germany and the Western Part of the Russian Federation”
-K. Bote "Effects of glyphosate on induction of resistance, enrichment of pathogenic bacteria and antibiotic resistance in farm animals"
-R. Uzupyte "Testing for triadic closure and triadic protection of social relationships"
-
